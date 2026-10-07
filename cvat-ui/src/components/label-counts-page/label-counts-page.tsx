@@ -14,6 +14,7 @@ import Button from 'antd/lib/button';
 import Empty from 'antd/lib/empty';
 import Radio from 'antd/lib/radio';
 import Result from 'antd/lib/result';
+import Tag from 'antd/lib/tag';
 import Text from 'antd/lib/typography/Text';
 import Title from 'antd/lib/typography/Title';
 
@@ -25,6 +26,8 @@ Chart.register(BarElement, CategoryScale, LinearScale, Tooltip);
 
 const core = getCore();
 const BAR_HEIGHT_PX = 22;
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 15000;
 
 interface LabelCount {
     id: number;
@@ -41,6 +44,8 @@ interface LabelCounts {
     total: number;
     labels: LabelCount[];
 }
+
+type LiveStatus = 'connecting' | 'live' | 'reconnecting' | 'off';
 
 type PageState =
     { status: 'loading' } |
@@ -61,6 +66,64 @@ function liveCountsUrl(taskId: number, mode: CountMode): string {
     const path = `${core.config.backendAPI}/test/ws/tasks/${taskId}/label-counts`;
     return `${protocol}://${window.location.host}${path}?count=${mode}`;
 }
+
+// The server closes with 4000 + an HTTP status when it refuses the request.
+// Retrying cannot fix a 4xx, so only other closes reconnect.
+function isRefusal(closeCode: number): boolean {
+    return closeCode >= 4400 && closeCode < 4500;
+}
+
+function useLiveLabelCounts(
+    taskId: number, mode: CountMode, onCounts: (counts: LabelCounts) => void,
+): LiveStatus {
+    const [status, setStatus] = useState<LiveStatus>('connecting');
+
+    useEffect(() => {
+        let socket: WebSocket | null = null;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        let failedAttempts = 0;
+        let disposed = false;
+
+        const connect = (): void => {
+            socket = new WebSocket(liveCountsUrl(taskId, mode));
+            socket.onopen = () => {
+                failedAttempts = 0;
+                setStatus('live');
+            };
+            // The first message after every (re)connect carries the current counts,
+            // so changes made while disconnected are picked up here.
+            socket.onmessage = (event) => onCounts(JSON.parse(event.data));
+            socket.onclose = (event) => {
+                if (disposed) return;
+                if (isRefusal(event.code)) {
+                    setStatus('off');
+                    return;
+                }
+                const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** failedAttempts, RECONNECT_MAX_DELAY_MS);
+                failedAttempts += 1;
+                setStatus('reconnecting');
+                retryTimer = setTimeout(connect, delay);
+            };
+        };
+
+        setStatus('connecting');
+        connect();
+        return () => {
+            disposed = true;
+            if (retryTimer) clearTimeout(retryTimer);
+            socket?.close();
+        };
+    }, [taskId, mode, onCounts]);
+
+    return status;
+}
+
+const LIVE_STATUS_TAGS: Record<LiveStatus, JSX.Element> = {
+    connecting: <Tag>Connecting…</Tag>,
+    live: <Tag color='success'>Live</Tag>,
+    reconnecting: <Tag color='warning'>Connection lost, reconnecting…</Tag>,
+    off: <Tag>Live updates off</Tag>,
+};
 
 function LabelCountsChart({ labels }: { labels: LabelCount[] }): JSX.Element {
     const shown = labels.filter((label) => label.count > 0).sort((a, b) => b.count - a.count);
@@ -108,11 +171,8 @@ function LabelCountsPage(): JSX.Element {
 
     useEffect(load, [load]);
 
-    useEffect(() => {
-        const socket = new WebSocket(liveCountsUrl(taskId, mode));
-        socket.onmessage = (event) => setState({ status: 'ready', counts: JSON.parse(event.data) });
-        return () => socket.close();
-    }, [taskId, mode]);
+    const onLiveCounts = useCallback((counts: LabelCounts) => setState({ status: 'ready', counts }), []);
+    const liveStatus = useLiveLabelCounts(taskId, mode, onLiveCounts);
 
     let content: JSX.Element;
     if (state.status === 'loading') {
@@ -137,7 +197,9 @@ function LabelCountsPage(): JSX.Element {
     } else {
         content = (
             <>
-                <Text strong className='cvat-label-counts-total'>{`${state.counts.total} ${mode === 'objects' ? 'objects' : 'annotations'}`}</Text>
+                <Text strong className='cvat-label-counts-total'>
+                    {`${state.counts.total} ${mode === 'objects' ? 'objects' : 'annotations'}`}
+                </Text>
                 <LabelCountsChart labels={state.counts.labels} />
             </>
         );
@@ -147,6 +209,7 @@ function LabelCountsPage(): JSX.Element {
         <div className='cvat-label-counts-page'>
             <GoBackButton />
             <Title level={4}>{`Annotations per label, task #${taskId}`}</Title>
+            <div className='cvat-label-counts-live-status'>{LIVE_STATUS_TAGS[liveStatus]}</div>
             <Radio.Group
                 className='cvat-label-counts-mode'
                 optionType='button'
