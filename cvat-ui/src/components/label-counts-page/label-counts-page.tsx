@@ -55,6 +55,13 @@ async function fetchLabelCounts(taskId: number, mode: CountMode): Promise<LabelC
     return response.data;
 }
 
+// The server pushes the counts again whenever the task's annotations change.
+function liveCountsUrl(taskId: number, mode: CountMode): string {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const path = `${core.config.backendAPI}/test/ws/tasks/${taskId}/label-counts`;
+    return `${protocol}://${window.location.host}${path}?count=${mode}`;
+}
+
 function LabelCountsChart({ labels }: { labels: LabelCount[] }): JSX.Element {
     const shown = labels.filter((label) => label.count > 0).sort((a, b) => b.count - a.count);
     const unused = labels.length - shown.length;
@@ -101,6 +108,12 @@ function LabelCountsPage(): JSX.Element {
 
     useEffect(load, [load]);
 
+    useEffect(() => {
+        const socket = new WebSocket(liveCountsUrl(taskId, mode));
+        socket.onmessage = (event) => setState({ status: 'ready', counts: JSON.parse(event.data) });
+        return () => socket.close();
+    }, [taskId, mode]);
+
     let content: JSX.Element;
     if (state.status === 'loading') {
         content = <CVATLoadingSpinner />;
@@ -124,7 +137,7 @@ function LabelCountsPage(): JSX.Element {
     } else {
         content = (
             <>
-                <Text strong>{`${state.counts.total} ${mode === 'objects' ? 'objects' : 'annotations'}`}</Text>
+                <Text strong className='cvat-label-counts-total'>{`${state.counts.total} ${mode === 'objects' ? 'objects' : 'annotations'}`}</Text>
                 <LabelCountsChart labels={state.counts.labels} />
             </>
         );
