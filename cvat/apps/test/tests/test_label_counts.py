@@ -88,6 +88,14 @@ class LabelCountsAPITestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_user_without_access_to_task_is_403(self):
+        outsider = User.objects.create_user(username="outsider", password="outsider")
+        outsider.groups.add(Group.objects.get(name="user"))
+
+        response = self._get(outsider)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_anonymous_request_is_401(self):
         response = self._get(None)
 
