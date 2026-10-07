@@ -14,5 +14,6 @@ class LabelCountSerializer(serializers.Serializer):
 
 class LabelCountsSerializer(serializers.Serializer):
     task_id = serializers.IntegerField()
+    count_mode = serializers.CharField()
     total = serializers.IntegerField()
     labels = LabelCountSerializer(many=True)

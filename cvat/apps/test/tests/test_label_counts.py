@@ -50,8 +50,8 @@ class LabelCountsAPITestCase(APITestCase):
             parent=parent,
         )
 
-    def _get(self, user, task_id=None):
-        url = f"/api/test/tasks/{task_id or self.task.id}/label-counts"
+    def _get(self, user, task_id=None, query=""):
+        url = f"/api/test/tasks/{task_id or self.task.id}/label-counts{query}"
         if user is None:
             return self.client.get(url)
         with ForceLogin(user, self.client):
@@ -82,6 +82,25 @@ class LabelCountsAPITestCase(APITestCase):
         self.assertEqual(counts["person"], 1)
         self.assertEqual(counts["cat"], 0)
         self.assertNotIn("nose", counts)
+
+    def test_objects_mode_counts_a_group_of_parts_once(self):
+        for _ in range(2):
+            part = self._add_shape(self.cat, "polygon")
+            part.group = 1
+            part.save()
+        self._add_shape(self.cat)
+
+        shapes = self._get(self.owner, query="?count=shapes")
+        objects = self._get(self.owner, query="?count=objects")
+
+        self.assertEqual(shapes.data["total"], 3)
+        self.assertEqual(objects.data["total"], 2)
+        self.assertEqual(objects.data["count_mode"], "objects")
+
+    def test_unknown_count_mode_is_400(self):
+        response = self._get(self.owner, query="?count=pixels")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_unknown_task_is_404(self):
         response = self._get(self.owner, task_id=self.task.id + 1000)

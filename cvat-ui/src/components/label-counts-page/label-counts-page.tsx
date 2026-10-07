@@ -12,6 +12,7 @@ import {
 } from 'chart.js';
 import Button from 'antd/lib/button';
 import Empty from 'antd/lib/empty';
+import Radio from 'antd/lib/radio';
 import Result from 'antd/lib/result';
 import Text from 'antd/lib/typography/Text';
 import Title from 'antd/lib/typography/Title';
@@ -32,8 +33,11 @@ interface LabelCount {
     count: number;
 }
 
+type CountMode = 'shapes' | 'objects';
+
 interface LabelCounts {
     task_id: number;
+    count_mode: CountMode;
     total: number;
     labels: LabelCount[];
 }
@@ -43,10 +47,10 @@ type PageState =
     { status: 'error', message: string } |
     { status: 'ready', counts: LabelCounts };
 
-async function fetchLabelCounts(taskId: number): Promise<LabelCounts> {
+async function fetchLabelCounts(taskId: number, mode: CountMode): Promise<LabelCounts> {
     const response = await core.server.request(
         `${core.config.backendAPI}/test/tasks/${taskId}/label-counts`,
-        { method: 'GET' },
+        { method: 'GET', params: { count: mode } },
     );
     return response.data;
 }
@@ -83,16 +87,17 @@ function LabelCountsChart({ labels }: { labels: LabelCount[] }): JSX.Element {
 function LabelCountsPage(): JSX.Element {
     const taskId = +useParams<{ tid: string }>().tid;
     const [state, setState] = useState<PageState>({ status: 'loading' });
+    const [mode, setMode] = useState<CountMode>('shapes');
 
     const load = useCallback(() => {
         setState({ status: 'loading' });
-        fetchLabelCounts(taskId)
+        fetchLabelCounts(taskId, mode)
             .then((counts) => setState({ status: 'ready', counts }))
             .catch((error: unknown) => setState({
                 status: 'error',
                 message: error instanceof Error ? error.message : String(error),
             }));
-    }, [taskId]);
+    }, [taskId, mode]);
 
     useEffect(load, [load]);
 
@@ -119,7 +124,7 @@ function LabelCountsPage(): JSX.Element {
     } else {
         content = (
             <>
-                <Text strong>{`${state.counts.total} annotations`}</Text>
+                <Text strong>{`${state.counts.total} ${mode === 'objects' ? 'objects' : 'annotations'}`}</Text>
                 <LabelCountsChart labels={state.counts.labels} />
             </>
         );
@@ -129,6 +134,20 @@ function LabelCountsPage(): JSX.Element {
         <div className='cvat-label-counts-page'>
             <GoBackButton />
             <Title level={4}>{`Annotations per label, task #${taskId}`}</Title>
+            <Radio.Group
+                className='cvat-label-counts-mode'
+                optionType='button'
+                value={mode}
+                onChange={(event) => setMode(event.target.value)}
+                options={[
+                    { value: 'shapes', label: 'Shapes', title: 'Every stored shape, track and tag counts once' },
+                    {
+                        value: 'objects',
+                        label: 'Objects',
+                        title: 'Shapes grouped together on one frame count as one object',
+                    },
+                ]}
+            />
             {content}
         </div>
     );
