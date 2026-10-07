@@ -93,6 +93,30 @@ I did not measure a larger task (all 5000 images, ~36k objects) in the time I ha
 | Conditions | Same as MO-1, one WebSocket client. |
 | Not included | Reconnect time after a dropped connection. |
 
-### Result
+### Result — target met
 
-_Not measured yet._
+Median **962 ms**, spread 921–1156 ms, measured at commit `4e2d97c34`. The script
+(`node ws_test.js`, a Node `ws` client with token auth) first checks the refusals, then saves and
+deletes one rectangle on job 1 five times. Raw output:
+
+```
+no login     -> close code 4401
+outsider     -> close code 4403
+owner        -> first message total = 8109
+run 1: total=8110 delay_after_save_ms=921
+run 2: total=8110 delay_after_save_ms=1017
+run 3: total=8110 delay_after_save_ms=962
+run 4: total=8110 delay_after_save_ms=1156
+run 5: total=8110 delay_after_save_ms=957
+median=962ms min=921ms max=1156ms
+```
+
+**What the number says.** The delay is set by the server's 1 s check of `Task.updated_date`, not
+by the query (about 80 ms, MO-1). The five runs sit near the top of the 0–1.1 s window because
+the script saves right after the previous push, i.e. right after a check; a save at a random
+moment would wait about half as long on average. Lowering the interval trades delay for one
+primary-key query per open page per interval.
+
+Reconnect, for the record (not an objective): with the page open I stopped `cvat_server`. The
+page showed "reconnecting" at once and was live again 57 s after `docker start`, most of which
+is the server's own start-up (migration check, uvicorn workers) plus up to 15 s of backoff.
